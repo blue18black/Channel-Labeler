@@ -804,9 +804,10 @@
     <div class="status-box" id="statusBox">画像をアップロードしてください</div>
   </div>
   <div class="header-right">
-    <button class="btn btn-secondary" id="undoDeleteBtn" disabled title="直前の変更（削除・移動・編集など）を元に戻す">↩️ 変更を元に戻す</button>
-    <button class="btn btn-secondary" id="resetBtn" disabled title="ラベルをすべて消して読み込んだ直後の画像に戻す">↩ リセット</button>
-    <button class="btn btn-download" id="downloadBtn" disabled title="今表示されている画像をPNGで保存">⬇ 画像を保存</button>
+    <button class="btn btn-secondary" id="undoDeleteBtn" disabled title="直前の変更（削除・移動・編集など）を元に戻す（Ctrl+Z）">変更を元に戻す</button>
+    <button class="btn btn-secondary" id="redoBtn" disabled title="元に戻した操作をやり直す（Ctrl+Y）">やり直す</button>
+    <button class="btn btn-secondary" id="resetBtn" disabled title="ラベルをすべて消して読み込んだ直後の画像に戻す">リセット</button>
+    <button class="btn btn-download" id="downloadBtn" disabled title="今表示されている画像をPNGで保存（Ctrl+S）">画像を保存</button>
   </div>
 </header>
 
@@ -861,7 +862,17 @@
     </div>
 
     <div class="sidebar-card">
-      <div class="action-item">
+      <div class="setting-row">
+        <label>開始チャンネル番号 <button type="button" class="help-btn" data-help="chStart">?</button></label>
+        <input type="number" id="chStartNumber" value="1" min="1" max="9999">
+      </div>
+      <div class="setting-row">
+        <label>終了チャンネル番号（任意） <button type="button" class="help-btn" data-help="chEnd">?</button></label>
+        <input type="number" id="chEndNumber" placeholder="自動" min="1" max="9999">
+      </div>
+      <div class="setting-help" id="help-chStart">この写真に写っているラベルが何番から始まるかを指定します。例えば32chを16個ずつ2回に分けて撮影した場合、1枚目は1、2枚目は17を入力してから検出してください（Ch17、Ch18…と振られます）。全部まとめて1枚で撮る場合は1のままで大丈夫です。「終了チャンネル番号」も入力すると、その範囲の個数（例:1〜16なら16個）を検出の目標数として使うので、データ行数がなくても検出数をぴったり合わせやすくなります。</div>
+
+      <div class="action-item" style="margin-top:10px">
         <div class="action-row">
           <button class="btn btn-primary" id="detectBtn" disabled>
             <span id="detectSpinner" style="visibility:hidden"><span class="spinner"></span></span>
@@ -869,7 +880,7 @@
           </button>
           <button type="button" class="help-btn" data-help="detect">?</button>
         </div>
-        <div class="setting-help" id="help-detect">画像から自動的にラベル候補を探し、Ch1、Ch2…という連番で仮のラベルを置きます。設定を自分で調整する必要はなく、うまく検出できないときは条件を自動でいろいろ変えながら探します。精度は完璧ではないので、置いた後に位置や文字を手動で調整してください。</div>
+        <div class="setting-help" id="help-detect">画像から自動的にラベル候補を探し、上で指定した番号から連番で仮のラベルを置きます。左上→左下→右上→右下…のように、列ごとに上から下へ番号を振ります。下の段になったラベルは自動で文字が枠の下側に表示されます。設定を自分で調整する必要はなく、うまく検出できないときは条件を自動でいろいろ変えながら探します。精度は完璧ではないので、置いた後に位置や文字を手動で調整してください。</div>
       </div>
     </div>
 
@@ -915,7 +926,15 @@
               <option value="below">枠の下</option>
             </select>
           </div>
-          <div class="setting-help" id="help-labelPosition">新しく配置するラベルの文字を、対象の枠の上と下のどちらに表示するかの初期値です。ラベルごとに、一覧表の「位置」列にあるボタン（⬆上 / ⬇下）でも個別に切り替えられます。</div>
+          <div class="setting-help" id="help-labelPosition">新しく配置するラベルの文字を、対象の枠の上と下のどちらに表示するかの初期値です。ラベルごとに、一覧表の「位置」列にあるボタン（⬆上 / ⬇下）や、画像上でラベルをShiftキーを押しながらクリックすることでも個別に切り替えられます。</div>
+        </div>
+
+        <div class="action-item" style="margin-top:10px">
+          <div class="action-row">
+            <button class="btn btn-secondary" id="evenBelowBtn" type="button" disabled>偶数chを下ラベルにする</button>
+            <button type="button" class="help-btn" data-help="evenBelow">?</button>
+          </div>
+          <div class="setting-help" id="help-evenBelow">配置済みのラベルのうち、Ch番号が偶数のものだけをまとめて「枠の下」表示に切り替えます。左右2列で上下に並ぶような配置で、偶数chが下側の段になっている場合にまとめて直すのに使えます。</div>
         </div>
       </details>
     </div>
@@ -1000,6 +1019,7 @@ const fileInput = document.getElementById('fileInput');
 const excelDropZone = document.getElementById('excelDropZone');
 const excelInput = document.getElementById('excelInput');
 const detectBtn = document.getElementById('detectBtn');
+const evenBelowBtn = document.getElementById('evenBelowBtn');
 const manualAddBtn = document.getElementById('manualAddBtn');
 const placeLegendBtn = document.getElementById('placeLegendBtn');
 const imageEditBtn = document.getElementById('imageEditBtn');
@@ -1016,11 +1036,14 @@ const cropApplyBtn = document.getElementById('cropApplyBtn');
 const cropCancelBtn = document.getElementById('cropCancelBtn');
 const cropActions = document.getElementById('cropActions');
 const undoDeleteBtn = document.getElementById('undoDeleteBtn');
+const redoBtn = document.getElementById('redoBtn');
 const resetBtn = document.getElementById('resetBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const statusBox = document.getElementById('statusBox');
 const outputCanvas = document.getElementById('outputCanvas');
 const ctx = outputCanvas.getContext('2d');
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = 'high';
 const placeholder = document.getElementById('placeholder');
 const canvasWrap = document.getElementById('canvasWrap');
 const detectSpinner = document.getElementById('detectSpinner');
@@ -1042,12 +1065,15 @@ let labelQueue = [];
 let queueIdCounter = 1;
 let armedPlacement = null; // { text, data, queueId }
 let dragInfo = null; // { idx, mode: 'move'|'resize', startCx, startCy, origX, origY, origW, origH }
+let swapPendingIdx = null; // index armed by a first double-click, waiting for a second
+let swapPendingTimer = null;
 const HANDLE_SIZE = 10;
 let cropMode = false;
 let cropRect = null; // {x,y,w,h} in canvas coords, once a drag finishes
 let cropDragStart = null; // {cx,cy} while dragging out a crop rectangle
 let detectionCandidates = []; // { result, params } entries shown when several configs tie on count
 let undoStack = []; // snapshots of detectedComponents taken right before a mutation
+let redoStack = []; // snapshots popped off undoStack, so an undo can be redone
 const UNDO_LIMIT = 30;
 
 // Interactive "画像を編集" state (touchpad pinch/scroll zoom + pan preview)
@@ -1064,6 +1090,8 @@ let imageEditHistory = []; // { image, width, height, components } snapshots tak
 let baseThreshold = 40;
 let baseMinW = 18;
 let baseMinH = 30;
+let channelStartNumber = 1; // lets a batch photo (e.g. Ch17-32) start numbering mid-sequence
+let detectionRunId = 0; // bumped to invalidate any in-flight auto-detection (e.g. when リセット is pressed)
 
 // ---------- File handling ----------
 dropZone.addEventListener('click', () => fileInput.click());
@@ -1100,16 +1128,21 @@ function loadImage(file) {
       manualAddBtn.disabled = false;
       placeLegendBtn.disabled = false;
       imageEditBtn.disabled = false;
+      evenBelowBtn.disabled = false;
       resetBtn.disabled = false;
       detectedComponents = [];
       nextManualId = 1;
       dragInfo = null;
+      clearTimeout(swapPendingTimer);
+      swapPendingIdx = null;
       panDragStart = null;
       setPlacementMode(false);
       exitImageEditMode();
       selectedIndex = null;
       undoStack = [];
       undoDeleteBtn.disabled = true;
+      redoStack = [];
+      redoBtn.disabled = true;
       imageEditHistory = [];
       imageEditUndoBtn.disabled = true;
       hideDetectionCandidates();
@@ -1252,7 +1285,7 @@ function renderFieldCheckboxes() {
       const alias = document.createElement('input');
       alias.type = 'text';
       alias.className = 'field-alias-input';
-      alias.placeholder = '凡例での表示名（例: V）';
+      alias.placeholder = '単位（例: V）※項目名の後に[単位]の形で表示';
       alias.value = fieldAliases[f.key] || '';
       alias.addEventListener('input', () => {
         fieldAliases[f.key] = alias.value;
@@ -1278,9 +1311,12 @@ function syncLegendDraft() {
 // correct after re-detecting or deleting false-positive boxes).
 function mapExcelDataToComponents() {
   if (excelRows.length === 0) return;
-  const autoComps = detectedComponents.filter(c => c.ch != null);
-  autoComps.forEach((c, idx) => {
-    c.data = excelRows[idx] || null;
+  // Map by the channel NUMBER itself (Ch17 -> excelRows[16]), not by position
+  // in the array — otherwise a batch photo that starts at a channel other
+  // than 1 would always pull rows from the top of the spreadsheet instead of
+  // the rows that actually correspond to its channel range.
+  detectedComponents.forEach(c => {
+    if (c.ch != null) c.data = excelRows[c.ch - 1] || null;
   });
 }
 
@@ -1394,9 +1430,17 @@ function renderQueueList() {
 // ---------- Legend ----------
 // Best-effort default alias for common column naming patterns (e.g. CA_VOLT -> V,
 // CA_TIME_ -> s). The user can always override it in the alias input.
+// Best-effort unit guess from common naming conventions, so the legend can
+// read "Eon[V]" / "on_s[s]" without the user having to type every unit by hand.
 function guessFieldAlias(col) {
-  if (/volt/i.test(col)) return 'V';
-  if (/time/i.test(col)) return 's';
+  const c = col.toLowerCase();
+  if (/(^|_)s$/.test(c) || /time/.test(c) || /sec/.test(c) || /delay/.test(c) || /duration/.test(c)) return 's';
+  if (/volt/.test(c) || /^e(on|off)?($|_)/.test(c)) return 'V';
+  if (/curr(ent)?/.test(c) || /(^|_)amp/.test(c)) return 'A';
+  if (/temp/.test(c)) return '℃';
+  if (/freq/.test(c) || /hz/.test(c)) return 'Hz';
+  if (/duty/.test(c) || /percent/.test(c)) return '%';
+  if (/resist/.test(c) || /ohm/.test(c)) return 'Ω';
   return '';
 }
 
@@ -1405,8 +1449,8 @@ function buildLegendDraftText() {
   if (selectedFields.has('ch')) lines.push('Ch');
   excelColumns.forEach(col => {
     if (selectedFields.has(col)) {
-      const alias = (fieldAliases[col] || '').trim() || col;
-      lines.push(`[${alias}]`);
+      const unit = (fieldAliases[col] || '').trim() || guessFieldAlias(col);
+      lines.push(unit ? `${col}[${unit}]` : col);
     }
   });
   if (lines.length === 0) lines.push('Ch');
@@ -1593,7 +1637,10 @@ imageEditApplyBtn.addEventListener('click', () => {
   const off = document.createElement('canvas');
   off.width = W;
   off.height = H;
-  off.getContext('2d').drawImage(originalImage, sx, sy, regionW, regionH, 0, 0, W, H);
+  const offCtx = off.getContext('2d');
+  offCtx.imageSmoothingEnabled = true;
+  offCtx.imageSmoothingQuality = 'high';
+  offCtx.drawImage(originalImage, sx, sy, regionW, regionH, 0, 0, W, H);
 
   const newImg = new Image();
   newImg.onload = () => {
@@ -1691,7 +1738,10 @@ function applyCrop() {
   const off = document.createElement('canvas');
   off.width = cw;
   off.height = ch;
-  off.getContext('2d').drawImage(originalImage, cx0, cy0, cw, ch, 0, 0, cw, ch);
+  const offCtx = off.getContext('2d');
+  offCtx.imageSmoothingEnabled = true;
+  offCtx.imageSmoothingQuality = 'high';
+  offCtx.drawImage(originalImage, cx0, cy0, cw, ch, 0, 0, cw, ch);
 
   const newImg = new Image();
   newImg.onload = () => {
@@ -1724,11 +1774,16 @@ function applyCrop() {
 // ---------- Detection ----------
 detectBtn.addEventListener('click', async () => {
   if (!originalImage) return;
+  // Captured so this run can tell if リセット (or a new detection) invalidated
+  // it while it was awaiting — see the runId checks below.
+  const runId = ++detectionRunId;
+  channelStartNumber = Math.max(1, parseInt(document.getElementById('chStartNumber').value) || 1);
   hideDetectionCandidates();
   detectBtn.disabled = true;
   detectSpinner.style.visibility = 'visible';
   setStatus('<span class="info">一致する設定を自動で探しています…</span>');
   await new Promise(r => setTimeout(r, 30));
+  if (runId !== detectionRunId) return; // cancelled while waiting
 
   // Draw original
   ctx.drawImage(originalImage, 0, 0);
@@ -1736,10 +1791,14 @@ detectBtn.addEventListener('click', async () => {
 
   // When Excel data is loaded, the goal isn't just "found something" — it's
   // "found exactly as many as there are data rows" so every row maps to a label.
-  // There's no manual threshold/size UI anymore, so always sweep straight away
-  // rather than trying one fixed guess first.
-  const targetCount = excelRows.length > 0 ? excelRows.length : null;
-  const found = await autoDetectFallback(imageData, { threshold: baseThreshold, minW: baseMinW, minH: baseMinH }, targetCount);
+  // An explicit end-channel number overrides this: it says exactly how many
+  // labels this photo should contain, which also lets it work without Excel.
+  const endChValue = parseInt(document.getElementById('chEndNumber').value);
+  const targetCount = (!isNaN(endChValue) && endChValue >= channelStartNumber)
+    ? (endChValue - channelStartNumber + 1)
+    : (excelRows.length > 0 ? excelRows.length : null);
+  const found = await autoDetectFallback(imageData, { threshold: baseThreshold, minW: baseMinW, minH: baseMinH }, targetCount, runId);
+  if (runId !== detectionRunId) return; // cancelled during the search
 
   if (found.length > 1) {
     // Several configs tie on the count but may point at completely different
@@ -1773,6 +1832,7 @@ detectBtn.addEventListener('click', async () => {
     return;
   }
 
+  renumberChannels(components); // applies the starting channel number chosen above
   mapExcelDataToComponents();
   regenerateAutoLabels();
   drawLabels(components);
@@ -1782,10 +1842,14 @@ detectBtn.addEventListener('click', async () => {
   detectBtn.disabled = false;
   detectSpinner.style.visibility = 'hidden';
   const detectedChCount = components.filter(c => c.ch != null).length;
-  const dataMsg = excelRows.length > 0
-    ? (excelRows.length === detectedChCount
-        ? `\nデータ${excelRows.length}行を対応付けました`
-        : `\n<span class="err">⚠ データ行数(${excelRows.length})と検出数(${detectedChCount})が一致しません</span>`)
+  // Compare against the range the user actually asked for this photo to cover
+  // (targetCount), not the whole spreadsheet — a 12-channel batch photo out of
+  // a 32-row file is a match, not a mismatch, once start/end are specified.
+  const expectedCount = targetCount != null ? targetCount : (excelRows.length > 0 ? excelRows.length : null);
+  const dataMsg = expectedCount != null
+    ? (expectedCount === detectedChCount
+        ? `\nデータ${detectedChCount}件（Ch${channelStartNumber}〜Ch${channelStartNumber + detectedChCount - 1}）を対応付けました`
+        : `\n<span class="err">⚠ 想定数(${expectedCount})と検出数(${detectedChCount})が一致しません</span>`)
     : '';
   setStatus(`<span class="ok">✓ ${components.length}個のチャンネルを検出</span>${dataMsg}`);
 });
@@ -1795,7 +1859,7 @@ detectBtn.addEventListener('click', async () => {
 // components as there are data rows). Always returns an array: empty (nothing
 // found), single entry (one reasonable option — committed automatically by the
 // caller), or several entries (ambiguous — the caller lets the user pick).
-async function autoDetectFallback(imageData, base, targetCount) {
+async function autoDetectFallback(imageData, base, targetCount, runId) {
   const thresholds = targetCount != null
     ? Array.from({ length: 23 }, (_, i) => 10 + i * 5) // 10, 15, ..., 120
     : [...new Set([base.threshold, 30, 40, 50, 60, 70, 80, 90, 100, 110, 25, 20, 15])];
@@ -1823,6 +1887,7 @@ async function autoDetectFallback(imageData, base, targetCount) {
 
   for (let i = 0; i < attempts.length; i++) {
     if (i % 6 === 0) await new Promise(r => setTimeout(r, 0)); // keep the UI responsive
+    if (runId !== detectionRunId) return []; // cancelled (e.g. リセット pressed) — stop burning CPU
     const a = attempts[i];
     const result = detectComponents(imageData, a.threshold, a.minW, a.minH);
     if (result.length === 0) continue;
@@ -1948,6 +2013,7 @@ function commitCandidate(candidate) {
   selectedIndex = null;
   hideDetectionCandidates();
 
+  renumberChannels(detectedComponents); // applies the chosen starting channel number
   mapExcelDataToComponents();
   regenerateAutoLabels();
   drawLabels(detectedComponents);
@@ -1956,10 +2022,14 @@ function commitCandidate(candidate) {
   downloadBtn.disabled = false;
 
   const detectedChCount = detectedComponents.filter(c => c.ch != null).length;
-  const dataMsg = excelRows.length > 0
-    ? (excelRows.length === detectedChCount
-        ? `\nデータ${excelRows.length}行を対応付けました`
-        : `\n<span class="err">⚠ データ行数(${excelRows.length})と検出数(${detectedChCount})が一致しません</span>`)
+  const endChValue = parseInt(document.getElementById('chEndNumber').value);
+  const expectedCount = (!isNaN(endChValue) && endChValue >= channelStartNumber)
+    ? (endChValue - channelStartNumber + 1)
+    : (excelRows.length > 0 ? excelRows.length : null);
+  const dataMsg = expectedCount != null
+    ? (expectedCount === detectedChCount
+        ? `\nデータ${detectedChCount}件（Ch${channelStartNumber}〜Ch${channelStartNumber + detectedChCount - 1}）を対応付けました`
+        : `\n<span class="err">⚠ 想定数(${expectedCount})と検出数(${detectedChCount})が一致しません</span>`)
     : '';
   setStatus(`<span class="ok">✓ 候補を採用しました（${detectedComponents.length}個）</span>${dataMsg}`);
 }
@@ -2049,7 +2119,11 @@ function detectComponents(imageData, threshold, minW, minH) {
   });
 
   // Cluster columns by cx
-  const colTolerance = Math.max(30, outputCanvas.width * 0.04);
+  // Looser than a "neat grid" would need, since real photos rarely have
+  // perfectly column-aligned components — this keeps slightly-off columns
+  // from getting split apart (which would break the intended top-to-bottom,
+  // column-by-column numbering order).
+  const colTolerance = Math.max(50, outputCanvas.width * 0.08);
   const sorted = [...rects].sort((a, b) => a.cx - b.cx);
   const cols = [];
   for (const r of sorted) {
@@ -2072,7 +2146,11 @@ function detectComponents(imageData, threshold, minW, minH) {
   cols.forEach((col, ci) => {
     col.items.sort((a, b) => a.cy - b.cy);
     col.items.forEach((r, ri) => {
-      result.push({ ch, col: ci+1, row: ri+1, x: r.x1, y: r.y1, w: r.x2-r.x1, h: r.y2-r.y1, cx: r.cx, cy: r.cy, label: `Ch${ch}`, autoLabel: true });
+      // Anything below the first row in its column risks the label (which
+      // floats above its box by default) overlapping the row above it, so
+      // default those to "below" instead.
+      const labelPos = ri === 0 ? 'above' : 'below';
+      result.push({ ch, col: ci+1, row: ri+1, x: r.x1, y: r.y1, w: r.x2-r.x1, h: r.y2-r.y1, cx: r.cx, cy: r.cy, label: `Ch${ch}`, autoLabel: true, labelPos });
       ch++;
     });
   });
@@ -2202,14 +2280,24 @@ function drawLegendPanel(c, selected) {
   });
 }
 
+// For a "below" label, the box's bottom edge sits right against the label
+// text, so a bottom-right handle would fight with clicking the label itself —
+// move the handle to the top-right (the edge away from the label) instead.
+function resizeHandleXY(c) {
+  const hx = c.x + c.w;
+  const hy = (!c.isLegend && effectiveLabelPos(c) === 'below') ? c.y : c.y + c.h;
+  return { hx, hy };
+}
+
 function drawResizeHandle(c, selected) {
   if (!selected) return;
   const hs = 9;
+  const { hx, hy } = resizeHandleXY(c);
   ctx.fillStyle = '#ff3b3b';
-  ctx.fillRect(c.x + c.w - hs / 2, c.y + c.h - hs / 2, hs, hs);
+  ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 1;
-  ctx.strokeRect(c.x + c.w - hs / 2, c.y + c.h - hs / 2, hs, hs);
+  ctx.strokeRect(hx - hs / 2, hy - hs / 2, hs, hs);
 }
 
 // ---------- Table ----------
@@ -2226,8 +2314,16 @@ function renderTable(components) {
     labelInput.rows = 2;
     labelInput.className = 'label-input';
     labelInput.value = c.label != null ? c.label : '';
-    labelInput.addEventListener('focus', () => pushUndoSnapshot());
+    let editSnapshotPushed = false;
+    labelInput.addEventListener('focus', () => { editSnapshotPushed = false; });
     labelInput.addEventListener('input', () => {
+      // Pushed on the first keystroke of this focus session, not on focus
+      // itself — focusing and clicking away without typing anything shouldn't
+      // waste an undo-stack slot on a snapshot that has nothing to undo.
+      if (!editSnapshotPushed) {
+        pushUndoSnapshot();
+        editSnapshotPushed = true;
+      }
       c.label = labelInput.value;
       c.autoLabel = false;
       if (originalImage) drawLabels(detectedComponents);
@@ -2300,7 +2396,7 @@ function setSelected(idx) {
 }
 
 function renumberChannels(components) {
-  let ch = 1;
+  let ch = channelStartNumber;
   components.forEach(c => {
     if (c.ch !== null && c.ch !== undefined) {
       c.ch = ch;
@@ -2329,18 +2425,17 @@ function removeComponentAt(idx) {
   setStatus('<span class="ok">✓ ラベルを削除しました</span>\n「変更を元に戻す」で復元できます');
 }
 
-// ---------- Undo (covers delete / move / resize / text edits / position flips) ----------
+// ---------- Undo / redo (covers delete / move / resize / text edits / position flips) ----------
 function pushUndoSnapshot() {
   undoStack.push(detectedComponents.map(c => ({ ...c })));
   if (undoStack.length > UNDO_LIMIT) undoStack.shift();
   undoDeleteBtn.disabled = false;
+  // A fresh change invalidates whatever used to be "ahead" of us.
+  redoStack = [];
+  redoBtn.disabled = true;
 }
 
-undoDeleteBtn.addEventListener('click', () => {
-  if (undoStack.length === 0) return;
-  detectedComponents = undoStack.pop();
-  undoDeleteBtn.disabled = undoStack.length === 0;
-
+function refreshAfterHistoryJump() {
   selectedIndex = null;
   drawLabels(detectedComponents);
   if (detectedComponents.length > 0) {
@@ -2350,16 +2445,85 @@ undoDeleteBtn.addEventListener('click', () => {
     document.getElementById('tableSection').style.display = 'none';
   }
   downloadBtn.disabled = detectedComponents.length === 0;
+}
+
+undoDeleteBtn.addEventListener('click', () => {
+  if (undoStack.length === 0) return;
+  redoStack.push(detectedComponents.map(c => ({ ...c })));
+  if (redoStack.length > UNDO_LIMIT) redoStack.shift();
+  redoBtn.disabled = false;
+
+  detectedComponents = undoStack.pop();
+  undoDeleteBtn.disabled = undoStack.length === 0;
+
+  refreshAfterHistoryJump();
   setStatus('<span class="ok">✓ 元に戻しました</span>');
 });
 
+redoBtn.addEventListener('click', () => {
+  if (redoStack.length === 0) return;
+  undoStack.push(detectedComponents.map(c => ({ ...c })));
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  undoDeleteBtn.disabled = false;
+
+  detectedComponents = redoStack.pop();
+  redoBtn.disabled = redoStack.length === 0;
+
+  refreshAfterHistoryJump();
+  setStatus('<span class="ok">✓ やり直しました</span>');
+});
+
+evenBelowBtn.addEventListener('click', () => {
+  if (!originalImage) return;
+  const targets = detectedComponents.filter(c => !c.isLegend && c.ch != null && c.ch % 2 === 0);
+  if (targets.length === 0) {
+    setStatus('<span class="info">偶数chのラベルが見つかりませんでした</span>');
+    return;
+  }
+  pushUndoSnapshot();
+  targets.forEach(c => { c.labelPos = 'below'; });
+  drawLabels(detectedComponents);
+  renderTable(detectedComponents);
+  setStatus(`<span class="ok">✓ 偶数chのラベル${targets.length}件を下側表示にしました</span>`);
+});
+
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-  const tag = document.activeElement && document.activeElement.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-  if (selectedIndex === null) return;
-  e.preventDefault();
-  removeComponentAt(selectedIndex);
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (selectedIndex === null) return;
+    e.preventDefault();
+    removeComponentAt(selectedIndex);
+    return;
+  }
+
+  const isCtrl = e.ctrlKey || e.metaKey;
+  if (!isCtrl) return;
+  const key = e.key.toLowerCase();
+
+  if (key === 'z' && !e.shiftKey) {
+    // Let a focused text field handle its own native undo instead of hijacking it.
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    e.preventDefault();
+    if (!undoDeleteBtn.disabled) undoDeleteBtn.click();
+    return;
+  }
+
+  // Ctrl+Y (Word-style) and Ctrl+Shift+Z (the more common cross-app convention)
+  // both redo, matching whichever habit the user has.
+  if (key === 'y' || (key === 'z' && e.shiftKey)) {
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    e.preventDefault();
+    if (!redoBtn.disabled) redoBtn.click();
+    return;
+  }
+
+  if (key === 's') {
+    e.preventDefault();
+    if (!downloadBtn.disabled) downloadBtn.click();
+  }
 });
 
 // ---------- Manual label placement (place / move / resize) ----------
@@ -2404,7 +2568,8 @@ function toCanvasCoords(e) {
 
 function hitTestHandle(c, cx, cy) {
   if (c.isLegend) return false; // legend panels auto-fit their text; no manual resize
-  return Math.abs(cx - (c.x + c.w)) <= HANDLE_SIZE && Math.abs(cy - (c.y + c.h)) <= HANDLE_SIZE;
+  const { hx, hy } = resizeHandleXY(c);
+  return Math.abs(cx - hx) <= HANDLE_SIZE && Math.abs(cy - hy) <= HANDLE_SIZE;
 }
 
 function hitTestBox(c, cx, cy) {
@@ -2412,20 +2577,27 @@ function hitTestBox(c, cx, cy) {
     return cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h;
   }
   const fontSize = parseInt(document.getElementById('fontSize').value) || 16;
-  const lineCount = Math.max(1, (c.label || '').split('\n').filter(l => l !== '').length);
+  const lines = (c.label || '').split('\n').filter(l => l !== '');
+  const lineCount = Math.max(1, lines.length);
   const labelBlockH = fontSize * 1.15 * lineCount + 8;
+  // The label text often renders wider than the physical box (e.g. "Ch5" over
+  // a narrow connector) — without accounting for that, clicks past the box's
+  // own right edge (most of a wide label) wouldn't register at all.
+  ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+  const labelW = lines.length ? Math.max(...lines.map(l => ctx.measureText(l).width)) + 6 : 0;
+  const hitRight = c.x + Math.max(c.w, labelW);
   const pos = effectiveLabelPos(c);
   const top = pos === 'below' ? c.y : c.y - labelBlockH;
   const bottom = pos === 'below' ? c.y + c.h + labelBlockH : c.y + c.h;
-  return cx >= c.x && cx <= c.x + c.w && cy >= top && cy <= bottom;
+  return cx >= c.x && cx <= hitRight && cy >= top && cy <= bottom;
 }
 
 function placeLabelAt(cx, cy) {
   if (!armedPlacement) return;
   const placement = armedPlacement;
   const isLegend = !!placement.isLegend;
-  const w = isLegend ? 240 : (baseMinW || 60);
-  const h = isLegend ? 120 : (baseMinH || 30);
+  const w = isLegend ? 240 : Math.max(baseMinW * 2.5, 90);
+  const h = isLegend ? 120 : Math.max(baseMinH * 2, 55);
 
   const newComp = {
     ch: null, col: null, row: null,
@@ -2476,11 +2648,28 @@ outputCanvas.addEventListener('mousedown', e => {
     return;
   }
 
+  if (e.shiftKey) {
+    for (let i = detectedComponents.length - 1; i >= 0; i--) {
+      const c = detectedComponents[i];
+      if (!c.isLegend && hitTestBox(c, cx, cy)) {
+        pushUndoSnapshot();
+        c.labelPos = effectiveLabelPos(c) === 'below' ? 'above' : 'below';
+        setSelected(i);
+        setStatus('<span class="ok">✓ ラベルの位置を切り替えました</span>');
+        return;
+      }
+    }
+    return;
+  }
+
   if (selectedIndex !== null) {
     const sel = detectedComponents[selectedIndex];
     if (sel && hitTestHandle(sel, cx, cy)) {
-      pushUndoSnapshot();
-      dragInfo = { idx: selectedIndex, mode: 'resize', startCx: cx, startCy: cy, origW: sel.w, origH: sel.h };
+      // The undo snapshot is pushed lazily on the first actual movement (see
+      // the mousemove handler below) — pushing it here would record a
+      // "nothing changed" snapshot for every plain click, and undoing that
+      // no-op snapshot afterward looks like undo silently failing.
+      dragInfo = { idx: selectedIndex, mode: 'resize', startCx: cx, startCy: cy, origW: sel.w, origH: sel.h, origX: sel.x, origY: sel.y, snapshotPushed: false };
       return;
     }
   }
@@ -2489,14 +2678,66 @@ outputCanvas.addEventListener('mousedown', e => {
     const c = detectedComponents[i];
     if (hitTestBox(c, cx, cy)) {
       setSelected(i);
-      pushUndoSnapshot();
-      dragInfo = { idx: i, mode: 'move', startCx: cx, startCy: cy, origX: c.x, origY: c.y };
+      dragInfo = { idx: i, mode: 'move', startCx: cx, startCy: cy, origX: c.x, origY: c.y, snapshotPushed: false };
       return;
     }
   }
 
   setSelected(null);
 });
+
+// Double-click one label, then double-click a different one, to swap which
+// physical spot each label points to (fixes "these two got mixed up" without
+// deleting and re-placing). Position, size AND above/below both come along,
+// so a bottom-row label swapped with a top-row one correctly becomes "above"
+// (and vice versa) instead of keeping its old side.
+outputCanvas.addEventListener('dblclick', e => {
+  if (!originalImage || manualAddMode || cropMode || zoomToolActive) return;
+  const { cx, cy } = toCanvasCoords(e);
+  let hitIdx = null;
+  for (let i = detectedComponents.length - 1; i >= 0; i--) {
+    if (hitTestBox(detectedComponents[i], cx, cy)) { hitIdx = i; break; }
+  }
+
+  if (hitIdx === null || detectedComponents[hitIdx].isLegend) {
+    clearTimeout(swapPendingTimer);
+    swapPendingIdx = null;
+    return;
+  }
+
+  if (swapPendingIdx === null) {
+    swapPendingIdx = hitIdx;
+    setSelected(hitIdx);
+    clearTimeout(swapPendingTimer);
+    swapPendingTimer = setTimeout(() => { swapPendingIdx = null; }, 6000);
+    setStatus('<span class="info">入れ替え元を選択しました。入れ替えたい別のラベルをダブルクリックしてください</span>');
+    return;
+  }
+
+  clearTimeout(swapPendingTimer);
+  if (swapPendingIdx === hitIdx) {
+    swapPendingIdx = null;
+    setStatus('<span class="info">入れ替えをキャンセルしました</span>');
+    return;
+  }
+
+  swapComponentPositions(swapPendingIdx, hitIdx);
+  swapPendingIdx = null;
+});
+
+function swapComponentPositions(idxA, idxB) {
+  pushUndoSnapshot();
+  const a = detectedComponents[idxA];
+  const b = detectedComponents[idxB];
+  const geomA = { x: a.x, y: a.y, w: a.w, h: a.h, cx: a.cx, cy: a.cy, labelPos: a.labelPos };
+  const geomB = { x: b.x, y: b.y, w: b.w, h: b.h, cx: b.cx, cy: b.cy, labelPos: b.labelPos };
+  Object.assign(a, geomB);
+  Object.assign(b, geomA);
+  selectedIndex = null;
+  drawLabels(detectedComponents);
+  renderTable(detectedComponents);
+  setStatus('<span class="ok">✓ 2つのラベルの位置を入れ替えました</span>');
+}
 
 outputCanvas.addEventListener('mousemove', e => {
   if (dragInfo || manualAddMode || cropMode || zoomToolActive || !originalImage) return;
@@ -2541,12 +2782,25 @@ window.addEventListener('mousemove', e => {
   const dx = cx - dragInfo.startCx;
   const dy = cy - dragInfo.startCy;
 
+  if (!dragInfo.snapshotPushed && (dx !== 0 || dy !== 0)) {
+    pushUndoSnapshot();
+    dragInfo.snapshotPushed = true;
+  }
+
   if (dragInfo.mode === 'move') {
     c.x = dragInfo.origX + dx;
     c.y = dragInfo.origY + dy;
   } else if (dragInfo.mode === 'resize') {
     c.w = Math.max(16, dragInfo.origW + dx);
-    c.h = Math.max(16, dragInfo.origH + dy);
+    if (!c.isLegend && effectiveLabelPos(c) === 'below') {
+      // Handle is top-right here, so the bottom edge is the anchor: growing
+      // upward increases height while keeping the bottom edge in place.
+      const newH = Math.max(16, dragInfo.origH - dy);
+      c.y = dragInfo.origY + (dragInfo.origH - newH);
+      c.h = newH;
+    } else {
+      c.h = Math.max(16, dragInfo.origH + dy);
+    }
   }
   c.cx = c.x + c.w / 2;
   c.cy = c.y + c.h / 2;
@@ -2577,6 +2831,9 @@ window.addEventListener('mouseup', () => {
 // ---------- Reset ----------
 resetBtn.addEventListener('click', () => {
   if (!originalImage) return;
+  detectionRunId++; // invalidate any in-flight auto-detection so it can't overwrite this reset
+  detectBtn.disabled = false;
+  detectSpinner.style.visibility = 'hidden';
   originalImage = pristineImage;
   outputCanvas.width = pristineWidth;
   outputCanvas.height = pristineHeight;
@@ -2584,12 +2841,16 @@ resetBtn.addEventListener('click', () => {
   detectedComponents = [];
   nextManualId = 1;
   dragInfo = null;
+  clearTimeout(swapPendingTimer);
+  swapPendingIdx = null;
   panDragStart = null;
   setPlacementMode(false);
   exitImageEditMode();
   selectedIndex = null;
   undoStack = [];
   undoDeleteBtn.disabled = true;
+  redoStack = [];
+  redoBtn.disabled = true;
   imageEditHistory = [];
   imageEditUndoBtn.disabled = true;
   hideDetectionCandidates();
