@@ -130,6 +130,16 @@
     gap: 0;
   }
 
+  /* While an auto-detection sweep is running, everything except リセット should
+     be inert — the search may replace detectedComponents at any moment, so
+     letting the user edit/drag/undo concurrently would race with that. */
+  body.detecting-lock .sidebar,
+  body.detecting-lock .canvas-area,
+  body.detecting-lock .header-right > button:not(#resetBtn) {
+    pointer-events: none;
+    opacity: 0.6;
+  }
+
   .sidebar {
     width: 280px;
     min-width: 280px;
@@ -880,7 +890,8 @@
           </button>
           <button type="button" class="help-btn" data-help="detect">?</button>
         </div>
-        <div class="setting-help" id="help-detect">画像から自動的にラベル候補を探し、上で指定した番号から連番で仮のラベルを置きます。左上→左下→右上→右下…のように、列ごとに上から下へ番号を振ります。下の段になったラベルは自動で文字が枠の下側に表示されます。設定を自分で調整する必要はなく、うまく検出できないときは条件を自動でいろいろ変えながら探します。精度は完璧ではないので、置いた後に位置や文字を手動で調整してください。</div>
+        <div class="setting-help" id="help-detect">画像から自動的にラベル候補を探し、上で指定した番号から連番で仮のラベルを置きます。左上→左下→右上→右下…のように、列ごとに上から下へ番号を振ります。下の段になったラベルは自動で文字が枠の下側に表示されます。設定を自分で調整する必要はなく、うまく検出できないときは条件を自動でいろいろ変えながら探します。精度は完璧ではないので、置いた後に位置や文字を手動で調整してください。最初に見つかった候補をすぐ配置するため、違う配置だった場合は下の「他の候補を探す」でさらに探せます。</div>
+        <button class="btn btn-secondary" id="moreCandidatesBtn" type="button" style="display:none; margin-top:8px; width:100%;">🔁 他の候補を探す（違う場合）</button>
       </div>
     </div>
 
@@ -1047,6 +1058,7 @@ ctx.imageSmoothingQuality = 'high';
 const placeholder = document.getElementById('placeholder');
 const canvasWrap = document.getElementById('canvasWrap');
 const detectSpinner = document.getElementById('detectSpinner');
+const moreCandidatesBtn = document.getElementById('moreCandidatesBtn');
 
 let originalImage = null;
 let originalFileName = 'image';
@@ -1092,6 +1104,11 @@ let baseMinW = 18;
 let baseMinH = 30;
 let channelStartNumber = 1; // lets a batch photo (e.g. Ch17-32) start numbering mid-sequence
 let detectionRunId = 0; // bumped to invalidate any in-flight auto-detection (e.g. when リセット is pressed)
+let detectionResumeState = null; // sweep state left off after the first candidate was found, so 「さらに検索」 can continue it
+
+function setDetectionLockUi(locked) {
+  document.body.classList.toggle('detecting-lock', locked);
+}
 
 // ---------- File handling ----------
 dropZone.addEventListener('click', () => fileInput.click());
@@ -1112,6 +1129,10 @@ function loadImage(file) {
   reader.onload = ev => {
     const img = new Image();
     img.onload = () => {
+      detectionRunId++; // invalidate any in-flight auto-detection tied to the previous image
+      setDetectionLockUi(false);
+      detectionResumeState = null;
+      moreCandidatesBtn.style.display = 'none';
       originalImage = img;
       pristineImage = img;
       pristineWidth = img.width;
@@ -1779,6 +1800,9 @@ detectBtn.addEventListener('click', async () => {
   const runId = ++detectionRunId;
   channelStartNumber = Math.max(1, parseInt(document.getElementById('chStartNumber').value) || 1);
   hideDetectionCandidates();
+  moreCandidatesBtn.style.display = 'none';
+  detectionResumeState = null;
+  setDetectionLockUi(true);
   detectBtn.disabled = true;
   detectSpinner.style.visibility = 'visible';
   setStatus('<span class="info">一致する設定を自動で探しています…</span>');
@@ -1797,18 +1821,18 @@ detectBtn.addEventListener('click', async () => {
   const targetCount = (!isNaN(endChValue) && endChValue >= channelStartNumber)
     ? (endChValue - channelStartNumber + 1)
     : (excelRows.length > 0 ? excelRows.length : null);
-  const found = await autoDetectFallback(imageData, { threshold: baseThreshold, minW: baseMinW, minH: baseMinH }, targetCount, runId);
-  if (runId !== detectionRunId) return; // cancelled during the search
 
-  if (found.length > 1) {
-    // Several configs tie on the count but may point at completely different
-    // boxes — let the user preview each and pick the one that actually lines
-    // up with the board, instead of silently committing a coincidental match.
-    detectBtn.disabled = false;
-    detectSpinner.style.visibility = 'hidden';
-    showDetectionCandidates(found);
-    setStatus(`<span class="info">検出数が一致する候補が${found.length}件見つかりました。「プレビュー」で確認して正しいものの「使う」を押してください</span>`);
-    return;
+  // Stop as soon as one matching candidate turns up rather than sweeping every
+  // combination — much faster in the common case. If it turns out to be wrong,
+  // 「さらに検索」 resumes this same state to look for more.
+  const state = createDetectionSweepState(imageData, { threshold: baseThreshold, minW: baseMinW, minH: baseMinH }, targetCount);
+  await runDetectionSweep(state, runId, true);
+  if (runId !== detectionRunId) return; // cancelled during the search
+  detectionResumeState = state;
+
+  let found = state.candidates;
+  if (found.length === 0 && state.exhausted && state.closest) {
+    found = [{ result: state.closest.result, params: state.closest.params }];
   }
 
   let components = [];
@@ -1829,6 +1853,7 @@ detectBtn.addEventListener('click', async () => {
     setStatus('<span class="err">✗ いろいろなパターンを試しましたが検出できませんでした。\n手動でラベルを配置する方法をお試しください。</span>');
     detectBtn.disabled = false;
     detectSpinner.style.visibility = 'hidden';
+    setDetectionLockUi(false);
     return;
   }
 
@@ -1841,6 +1866,15 @@ detectBtn.addEventListener('click', async () => {
   downloadBtn.disabled = false;
   detectBtn.disabled = false;
   detectSpinner.style.visibility = 'hidden';
+  setDetectionLockUi(false);
+
+  // A target count was given and the sweep hasn't been fully searched yet —
+  // there may be other layouts with the same count, so offer to keep looking.
+  if (targetCount != null && !state.exhausted) {
+    moreCandidatesBtn.style.display = 'flex';
+    moreCandidatesBtn.disabled = false;
+  }
+
   const detectedChCount = components.filter(c => c.ch != null).length;
   // Compare against the range the user actually asked for this photo to cover
   // (targetCount), not the whole spreadsheet — a 12-channel batch photo out of
@@ -1854,12 +1888,38 @@ detectBtn.addEventListener('click', async () => {
   setStatus(`<span class="ok">✓ ${components.length}個のチャンネルを検出</span>${dataMsg}`);
 });
 
-// Sweeps a range of threshold / minimum-size combinations when the user's current
-// settings find nothing (or, when Excel data is loaded, don't find exactly as many
-// components as there are data rows). Always returns an array: empty (nothing
-// found), single entry (one reasonable option — committed automatically by the
-// caller), or several entries (ambiguous — the caller lets the user pick).
-async function autoDetectFallback(imageData, base, targetCount, runId) {
+// If the first candidate 自動でチャンネルを検出 committed turns out to be wrong,
+// this resumes the same sweep from where it left off and collects every other
+// distinct layout matching the target count, then lets the user pick from them.
+moreCandidatesBtn.addEventListener('click', async () => {
+  if (!detectionResumeState || detectionResumeState.exhausted) return;
+  const runId = ++detectionRunId;
+  const state = detectionResumeState;
+  setDetectionLockUi(true);
+  moreCandidatesBtn.disabled = true;
+  setStatus('<span class="info">他の候補を探しています…</span>');
+  await new Promise(r => setTimeout(r, 30));
+  if (runId !== detectionRunId) return; // cancelled while waiting
+
+  await runDetectionSweep(state, runId, false);
+  if (runId !== detectionRunId) return; // cancelled during the search
+
+  setDetectionLockUi(false);
+  moreCandidatesBtn.style.display = 'none';
+
+  if (state.candidates.length <= 1) {
+    setStatus('<span class="info">他に一致する候補は見つかりませんでした</span>');
+    return;
+  }
+  showDetectionCandidates(state.candidates);
+  setStatus(`<span class="info">検出数が一致する候補が${state.candidates.length}件見つかりました。「プレビュー」で確認して正しいものの「使う」を押してください</span>`);
+});
+
+// Builds the full list of threshold / minimum-size combinations to try, in the
+// fixed order they'll be swept in — same list whether this is the fast initial
+// search or a later resumed 「さらに検索」, so a resume can pick up exactly
+// where the first pass left off.
+function buildDetectionAttempts(base, targetCount) {
   const thresholds = targetCount != null
     ? Array.from({ length: 23 }, (_, i) => 10 + i * 5) // 10, 15, ..., 120
     : [...new Set([base.threshold, 30, 40, 50, 60, 70, 80, 90, 100, 110, 25, 20, 15])];
@@ -1879,42 +1939,60 @@ async function autoDetectFallback(imageData, base, targetCount, runId) {
       attempts.push({ threshold: th, minW, minH });
     });
   });
+  return attempts;
+}
 
+// Creates the mutable sweep state that runDetectionSweep advances and that
+// gets stashed in detectionResumeState so 「さらに検索」 can continue it later.
+function createDetectionSweepState(imageData, base, targetCount) {
+  return {
+    imageData,
+    targetCount,
+    attempts: buildDetectionAttempts(base, targetCount),
+    index: 0,
+    candidates: [], // exact-count matches with visually distinct box layouts
+    seenShapes: new Set(),
+    closest: null, // closest component count to targetCount, used if no exact match found at all
+    exhausted: false,
+  };
+}
+
+// Advances a sweep state from state.index. When stopAtFirst is true (the fast
+// initial search) it returns as soon as a single new candidate is found, so the
+// UI can commit it immediately instead of waiting for the full sweep. Otherwise
+// (「さらに検索」) it runs to exhaustion, collecting every distinct candidate.
+// Mutates and returns state; the caller checks runId !== detectionRunId to
+// detect cancellation (e.g. リセット pressed mid-sweep).
+async function runDetectionSweep(state, runId, stopAtFirst) {
   const maxReasonable = 300;
-  const candidates = []; // exact-count matches with visually distinct box layouts
-  const seenShapes = new Set();
-  let closest = null; // closest component count to targetCount, used if no exact match
-
-  for (let i = 0; i < attempts.length; i++) {
-    if (i % 6 === 0) await new Promise(r => setTimeout(r, 0)); // keep the UI responsive
-    if (runId !== detectionRunId) return []; // cancelled (e.g. リセット pressed) — stop burning CPU
-    const a = attempts[i];
-    const result = detectComponents(imageData, a.threshold, a.minW, a.minH);
+  for (; state.index < state.attempts.length; state.index++) {
+    if (state.index % 6 === 0) await new Promise(r => setTimeout(r, 0)); // keep the UI responsive
+    if (runId !== detectionRunId) return state; // cancelled — stop burning CPU
+    const a = state.attempts[state.index];
+    const result = detectComponents(state.imageData, a.threshold, a.minW, a.minH);
     if (result.length === 0) continue;
     if (!sizeConsistencyOk(result)) continue; // wildly mismatched box sizes = not a real layout, skip
 
-    if (targetCount != null) {
-      if (result.length === targetCount) {
+    if (state.targetCount != null) {
+      if (result.length === state.targetCount) {
         const sig = resultSignature(result);
-        if (!seenShapes.has(sig)) {
-          seenShapes.add(sig);
-          candidates.push({ result, params: a });
-          if (candidates.length >= 12) break;
+        if (!state.seenShapes.has(sig)) {
+          state.seenShapes.add(sig);
+          state.candidates.push({ result, params: a });
+          if (stopAtFirst || state.candidates.length >= 12) { state.index++; return state; }
         }
       } else {
-        const diff = Math.abs(result.length - targetCount);
-        if (!closest || diff < closest.diff) closest = { result, params: a, diff };
+        const diff = Math.abs(result.length - state.targetCount);
+        if (!state.closest || diff < state.closest.diff) state.closest = { result, params: a, diff };
       }
     } else if (result.length <= maxReasonable) {
-      return [{ result, params: a }];
+      state.candidates.push({ result, params: a });
+      state.index++;
+      return state; // no target count — there's no "further candidates" concept, always stop at first
     }
   }
-
-  if (targetCount != null) {
-    if (candidates.length > 0) return candidates;
-    return closest ? [{ result: closest.result, params: closest.params }] : [];
-  }
-  return [];
+  state.exhausted = true;
+  return state;
 }
 
 // A real board's channels are roughly the same size; if a candidate's box sizes
@@ -2488,6 +2566,9 @@ evenBelowBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', e => {
+  // Detection is running — everything but リセット is locked, including shortcuts.
+  if (document.body.classList.contains('detecting-lock')) return;
+
   if (e.key === 'Delete' || e.key === 'Backspace') {
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -2834,6 +2915,9 @@ resetBtn.addEventListener('click', () => {
   detectionRunId++; // invalidate any in-flight auto-detection so it can't overwrite this reset
   detectBtn.disabled = false;
   detectSpinner.style.visibility = 'hidden';
+  setDetectionLockUi(false);
+  detectionResumeState = null;
+  moreCandidatesBtn.style.display = 'none';
   originalImage = pristineImage;
   outputCanvas.width = pristineWidth;
   outputCanvas.height = pristineHeight;
